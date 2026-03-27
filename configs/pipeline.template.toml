@@ -1,0 +1,13 @@
+[project]
+name = "foldable-noise-analysis"
+
+[paths]
+phone_master = "data/raw/phone_master.csv"
+audio_assets = "data/raw/audio_asset.csv"
+labels = "data/raw/labels.csv"
+phone_features = "data/processed/phone_features.csv"
+factor_input = "data/processed/factor_input.csv"
+
+[outputs]
+join_report = "artifacts/reports/join_report.json"
+factor_report = "artifacts/reports/factor_ranking.csv"

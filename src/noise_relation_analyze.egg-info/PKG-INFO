@@ -1,0 +1,68 @@
+Metadata-Version: 2.4
+Name: noise-relation-analyze
+Version: 0.1.0
+Summary: Foldable-device abnormal noise correlation analysis pipeline
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+
+# noise-relation-analyze
+
+Offline pipeline for foldable-device abnormal-noise analysis. The repository is structured to join phone-level metadata, process four-direction audio, derive phone-level acoustic summaries, and rank dimensional factors associated with each noise type.
+
+## Quick Start
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -e .
+pytest -q
+python -m noise_relation_analyze.cli --help
+```
+
+## Layout
+
+- `src/noise_relation_analyze/`: package source
+- `tests/`: regression and contract tests
+- `docs/superpowers/specs/`: approved design documents
+- `configs/pipeline.template.toml`: starter config template
+
+## Planned Pipeline Stages
+
+1. Join validation for phone, audio, and label data.
+2. Audio QC and bend-cycle segmentation.
+3. Cycle-level and phone-level acoustic feature generation.
+4. Noise-type scoring.
+5. Dimensional factor impact analysis and reporting.
+
+## Available Commands
+
+Validate joined source tables:
+
+```powershell
+python -m noise_relation_analyze.cli validate-joins `
+  --phone-master data/raw/phone_master.csv `
+  --audio-assets data/raw/audio_asset.csv `
+  --labels data/raw/labels.csv `
+  --output artifacts/reports/join_report.json
+```
+
+Rank dimensional factors from an engineered factor table:
+
+```powershell
+python -m noise_relation_analyze.cli analyze-factors `
+  --input data/processed/factor_input.csv `
+  --output artifacts/reports/factor_ranking.csv `
+  --target risk_score `
+  --factors gap_a gap_b gap_c
+```
+
+## Current Status
+
+The repository currently provides:
+
+- join validation against phone, audio, and label tables
+- cycle segmentation from a precomputed energy trace
+- phone-level acoustic summary aggregation
+- basic factor ranking by signed correlation strength
+
+The next implementation slice should connect real WAV loading, richer feature extraction, and model-based one-vs-rest noise scoring.

@@ -1,0 +1,11 @@
+.pytest_cache/
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+artifacts/
+data/interim/
+data/processed/
