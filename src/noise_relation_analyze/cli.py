@@ -11,6 +11,7 @@ from noise_relation_analyze.pipeline import (
     run_evaluate_scores,
     run_extract_features,
     run_prepare_factor_data,
+    run_render_noise_report_html,
     run_score_noise_types,
     run_train_noise_scorer,
     run_validate_joins,
@@ -85,6 +86,15 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--model", type=Path)
     report.add_argument("--phone-features", type=Path)
 
+    html = subparsers.add_parser("render-noise-report-html", help="Render a local HTML report with charts.")
+    html.add_argument("--report-json", type=Path)
+    html.add_argument("--scores", type=Path)
+    html.add_argument("--phone-features", type=Path)
+    html.add_argument("--model", type=Path)
+    html.add_argument("--output-dir", type=Path)
+    html.add_argument("--highlight-feature", type=str)
+    html.add_argument("--highlight-factor", type=str)
+
     analyze = subparsers.add_parser("analyze-factors", help="Rank dimensional factors.")
     analyze.add_argument("--input", type=Path)
     analyze.add_argument("--output", type=Path)
@@ -148,6 +158,17 @@ def main() -> int:
             factor_keys=args.factors,
             model_path=args.model,
             phone_features_csv=args.phone_features,
+        )
+        return 0
+    if args.command == "render-noise-report-html":
+        run_render_noise_report_html(
+            report_json=args.report_json,
+            scores_csv=args.scores,
+            phone_features_csv=args.phone_features,
+            model_path=args.model,
+            output_dir=args.output_dir,
+            highlight_feature=args.highlight_feature,
+            highlight_factor=args.highlight_factor,
         )
         return 0
     if args.command == "analyze-factors":

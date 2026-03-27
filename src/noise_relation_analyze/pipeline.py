@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 import numpy as np
-import shap
 
 from noise_relation_analyze.audio import load_wav_samples
 from noise_relation_analyze.factor_analysis import analyze_factor_impacts, build_shap_style_summary
@@ -61,6 +60,28 @@ def run_validate_joins(
         encoding="utf-8",
     )
     return report
+
+
+def run_render_noise_report_html(
+    report_json: Path,
+    scores_csv: Path,
+    phone_features_csv: Path,
+    model_path: Path,
+    output_dir: Path,
+    highlight_feature: str,
+    highlight_factor: str,
+) -> Path:
+    from noise_relation_analyze.reporting import render_noise_report_html
+
+    return render_noise_report_html(
+        report_json=report_json,
+        scores_csv=scores_csv,
+        phone_features_csv=phone_features_csv,
+        model_path=model_path,
+        output_dir=output_dir,
+        highlight_feature=highlight_feature,
+        highlight_factor=highlight_factor,
+    )
 
 
 def run_analyze_factors(
@@ -398,19 +419,34 @@ def run_demo_pipeline(
         "type_2": ["torsion_delta", "right_support_gap", "hinge_gap", "panel_flushness"],
         "type_3": ["panel_flushness", "adhesive_thickness", "hinge_gap", "left_support_gap"],
     }
+    configured_visuals = {
+        "type_1": {"feature": "dir_1_share", "factor": "hinge_gap"},
+        "type_2": {"feature": "dir_3_share", "factor": "torsion_delta"},
+        "type_3": {"feature": "dir_2_score", "factor": "panel_flushness"},
+    }
     active_noise_types = noise_types or ["type_1", "type_2", "type_3", "normal"]
     for noise_type in active_noise_types:
         if noise_type == "normal" or noise_type not in configured_reports:
             continue
+        report_json = reports_dir / f"{noise_type}_report.json"
         run_build_noise_report(
             scores_csv=artifacts_dir / "scores.csv",
             dimension_csv=manifest.dimension_csv,
             labels_csv=manifest.labels_csv,
-            output_json=reports_dir / f"{noise_type}_report.json",
+            output_json=report_json,
             noise_type=noise_type,
             factor_keys=configured_reports[noise_type],
             model_path=artifacts_dir / "noise_model.bin",
             phone_features_csv=artifacts_dir / "phone_features.csv",
+        )
+        run_render_noise_report_html(
+            report_json=report_json,
+            scores_csv=artifacts_dir / "scores.csv",
+            phone_features_csv=artifacts_dir / "phone_features.csv",
+            model_path=artifacts_dir / "noise_model.bin",
+            output_dir=artifacts_dir / "html" / noise_type,
+            highlight_feature=configured_visuals[noise_type]["feature"],
+            highlight_factor=configured_visuals[noise_type]["factor"],
         )
 
 
@@ -420,6 +456,8 @@ def _read_csv_rows(path: Path) -> list[dict[str, str]]:
 
 
 def _build_tree_shap_summary(model, feature_rows: list[dict[str, str]], target_label: str) -> tuple[list[dict], list[dict]]:
+    import shap
+
     x = np.asarray(
         [[float(row[key]) for key in model.feature_keys] for row in feature_rows],
         dtype=float,

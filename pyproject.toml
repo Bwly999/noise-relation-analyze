@@ -8,7 +8,12 @@ version = "0.1.0"
 description = "Foldable-device abnormal noise correlation analysis pipeline"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "numpy>=2.0",
+    "scikit-learn>=1.8",
+    "shap>=0.51",
+    "matplotlib>=3.10",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

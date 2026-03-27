@@ -132,6 +132,19 @@ python -m noise_relation_analyze.cli build-noise-report `
   --phone-features examples/demo_pipeline/artifacts/phone_features.csv
 ```
 
+Render a local HTML report with SHAP plots and factor curves:
+
+```powershell
+python -m noise_relation_analyze.cli render-noise-report-html `
+  --report-json examples/type1_pipeline/artifacts/reports/type_1_report.json `
+  --scores examples/type1_pipeline/artifacts/scores.csv `
+  --phone-features examples/type1_pipeline/artifacts/phone_features.csv `
+  --model examples/type1_pipeline/artifacts/noise_model.bin `
+  --output-dir examples/type1_pipeline/artifacts/html/type_1 `
+  --highlight-feature dir_1_share `
+  --highlight-factor hinge_gap
+```
+
 ## Current Status
 
 The repository currently provides:
@@ -174,6 +187,7 @@ This produces:
 - `scores.csv`
 - `metrics.json`
 - `reports/type_1_report.json`
+- `html/type_1/report.html`
 
 The next upgrade path is:
 
