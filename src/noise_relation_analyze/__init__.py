@@ -6,5 +6,6 @@ __all__ = [
     "factor_analysis",
     "features",
     "registry",
+    "severity",
     "synthetic_data",
 ]

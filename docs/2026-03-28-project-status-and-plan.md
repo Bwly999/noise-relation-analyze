@@ -2,7 +2,14 @@
 
 ## Current Status
 
-The project has reached a usable MVP for `type_1 vs normal`, while preserving the ability to expand back to multi-class analysis later.
+The project has now moved beyond the original `type_1 vs normal` MVP. The primary working path is:
+
+1. one noise type only
+2. quantify audio `severity_score`
+3. use binary `is_ng` as the exceedance label
+4. model `dimensions -> severity_score`
+5. model `dimensions -> ng_risk`
+6. explain both with `XGBoost + Tree SHAP + local HTML`
 
 ### 1. Project Foundation
 
@@ -14,10 +21,11 @@ The project has reached a usable MVP for `type_1 vs normal`, while preserving th
 
 - The original end-to-end design has been written and retained in:
   - `docs/superpowers/specs/2026-03-28-foldable-noise-analysis-design.md`
-- The current engineering focus has been intentionally narrowed to:
+- The current engineering focus is intentionally narrowed to:
   - one noise type first
-  - `type_1` versus `normal`
-  - reliable risk scoring and reliable factor analysis before re-expanding to multi-type
+  - same phenomenon, different severity only
+  - severity quantification before dimension correlation analysis
+  - reliable NG-risk modeling before re-expanding to multiple noise classes
 
 ### 3. Synthetic Data Capability
 
@@ -31,6 +39,11 @@ The project has reached a usable MVP for `type_1 vs normal`, while preserving th
 - It supports both:
   - focused binary mode such as `type_1 + normal`
   - broader multi-type mode
+- It now also supports a single-type severity mode:
+  - one noise type only
+  - 4-direction WAV files with different severity levels
+  - `is_ng`
+  - hidden `true_severity` for offline validation
 - Main implementation:
   - `src/noise_relation_analyze/synthetic_data.py`
 
@@ -59,7 +72,7 @@ The project has reached a usable MVP for `type_1 vs normal`, while preserving th
 - Main implementation:
   - `src/noise_relation_analyze/features.py`
 
-### 6. Noise Scoring Model
+### 6. Legacy Noise Scoring Model
 
 - The original lightweight centroid scorer has been replaced.
 - The current scorer uses `RandomForestClassifier`.
@@ -71,7 +84,22 @@ The project has reached a usable MVP for `type_1 vs normal`, while preserving th
 - Main implementation:
   - `src/noise_relation_analyze/scoring.py`
 
-### 7. Factor Analysis
+### 7. Current Severity Quantification
+
+- The mainline no longer starts from `noise_type` classification.
+- Same-type audio is quantified into a continuous `severity_score`.
+- The current quantification method is a robust weighted composite of:
+  - `severity_index`
+  - `impulse_score_mean`
+  - `asymmetry_score`
+- The repository also retains diagnostic acoustic features:
+  - `crest_factor_mean`
+  - `spectral_centroid_mean`
+  - `high_band_ratio_mean`
+- Main implementation:
+  - `src/noise_relation_analyze/severity.py`
+
+### 8. Factor Analysis
 
 - The factor-analysis layer is no longer plain Pearson-only ranking.
 - Current factor analysis includes:
@@ -84,18 +112,34 @@ The project has reached a usable MVP for `type_1 vs normal`, while preserving th
 - Main implementation:
   - `src/noise_relation_analyze/factor_analysis.py`
 
-### 8. True Model Explainability
+### 9. Current XGBoost Modeling
 
-- The reporting layer now supports real `Tree SHAP` for the trained random-forest model.
-- The report includes:
-  - factor-level dimension analysis
-  - model summary with CV metrics
-  - acoustic feature SHAP summary
-  - per-sample acoustic feature contribution explanations
+- The current severity workflow uses:
+  - `XGBoost` regression for `dimensions -> severity_score`
+  - `XGBoost` classification for `dimensions -> ng_risk`
+- The current synthetic verification result on the new single-type pipeline is:
+  - `severity_truth_spearman = 0.9923`
+  - `severity_ng_auc = 1.0000`
+  - `severity_cv_spearman = 0.9086`
+  - `ng_cv_auc = 0.9767`
 - Main implementation:
-  - `src/noise_relation_analyze/pipeline.py`
+  - `src/noise_relation_analyze/severity.py`
 
-### 9. End-To-End Pipeline
+### 10. True Model Explainability
+
+- The reporting layer now supports real `Tree SHAP` for both:
+  - severity regression
+  - NG classification
+- The report includes:
+  - SHAP contribution ranking
+  - SHAP beeswarm
+  - SHAP dependence curves
+  - factor tables with correlation, bootstrap stability, and SHAP magnitude
+  - local HTML output
+- Main implementation:
+  - `src/noise_relation_analyze/reporting.py`
+
+### 11. End-To-End Pipeline
 
 - The pipeline currently supports:
   - join validation
@@ -107,38 +151,47 @@ The project has reached a usable MVP for `type_1 vs normal`, while preserving th
   - score evaluation
   - noise report generation
   - one-command demo pipeline execution
+  - single-type severity dataset assembly
+  - single-type severity / NG model training
+  - single-type severity / NG scoring
+  - single-type severity HTML report generation
 - Main implementation:
   - `src/noise_relation_analyze/pipeline.py`
   - `src/noise_relation_analyze/cli.py`
 
-### 10. Current Example Outputs
+### 12. Current Example Outputs
 
 - Focused binary demo output:
   - `examples/type1_pipeline/`
+- Current single-type severity demo output:
+  - `examples/single_type_pipeline/`
 - Current key artifacts:
   - `examples/type1_pipeline/artifacts/metrics.json`
   - `examples/type1_pipeline/artifacts/noise_model.bin`
   - `examples/type1_pipeline/artifacts/reports/type_1_report.json`
+  - `examples/single_type_pipeline/artifacts/single_type_dataset.csv`
+  - `examples/single_type_pipeline/artifacts/single_type_models.bin`
+  - `examples/single_type_pipeline/artifacts/reports/type_1_severity_report.json`
+  - `examples/single_type_pipeline/artifacts/html/type_1/report.html`
 
-### 11. Verification Status
+### 13. Verification Status
 
 - Full test suite currently passes.
 - Latest verified result:
-  - `23 passed`
+  - `27 passed`
 
 ## What The Current MVP Can Reliably Do
 
 The current repository can already support the following development loop without real factory data:
 
-1. Generate a controlled binary dataset for `type_1` and `normal`.
+1. Generate one same-type dataset with different severity levels.
 2. Generate 4-direction synthetic WAV files aligned to dimensional data.
 3. Extract phone-level acoustic descriptors from WAV input.
-4. Train a classifier and quantify cross-validated performance.
-5. Score all phones with predicted probabilities.
-6. Rank structural dimensions against the target noise risk.
-7. Explain both:
-   - which dimensions are associated with the noise type
-   - which acoustic features drive the trained classifier
+4. Quantify same-type severity from audio.
+5. Train a dimension-to-severity regressor.
+6. Train a dimension-to-NG classifier.
+7. Rank structural dimensions against both severity and NG.
+8. Explain both models with SHAP locally in HTML.
 
 ## Limits Of The Current Version
 
@@ -148,8 +201,9 @@ Current limits:
 
 - Audio segmentation is still threshold-based and not angle-signal-aware.
 - Acoustic features are stronger than before, but still not exhaustive.
-- The model is stronger than the original baseline, but not yet tuned for domain robustness.
-- The factor-analysis evidence stack is improved, but still not a full multi-model causal workflow.
+- The current severity score is still batch-relative, not an absolute physics-grounded standard yet.
+- The model is stronger than the original baseline, but not yet tuned for domain robustness on real data.
+- The factor-analysis evidence stack is improved, but still not a causal workflow.
 - No real production data ingestion or schema adapter has been implemented yet.
 - No batch-level drift validation or leave-batch-out validation has been implemented yet.
 
@@ -203,7 +257,7 @@ Goal:
 
 Work:
 
-- benchmark random forest versus boosted tree models
+- benchmark current `XGBoost` against `LightGBM` when environment support is ready
 - add proper holdout evaluation
 - add batch-aware or group-aware validation when real metadata is available
 - add probability calibration if needed
@@ -255,8 +309,8 @@ Goal:
 
 Work:
 
-- add one-vs-rest training for each major noise type
-- generate per-type reports independently
+- replicate the current single-type severity workflow for each major noise type
+- generate per-type severity and NG reports independently
 - ensure factor conclusions do not cross-contaminate across noise types
 
 Success condition:
@@ -268,7 +322,8 @@ Success condition:
 The immediate next battle should be:
 
 1. connect real data into the canonical tables
-2. keep `type_1 vs normal` as the first production-grade target
-3. validate the current model and report behavior on real samples before any multi-type expansion
+2. keep `type_1` single-type severity analysis as the first production-grade target
+3. verify whether the current audio severity score still aligns with NG labels on real samples
+4. then validate dimension-to-severity and dimension-to-NG behavior under batch-aware splitting
 
-That path gives the fastest route from current synthetic MVP to a trustworthy engineering analysis tool.
+That path gives the fastest route from the current synthetic severity MVP to a trustworthy engineering analysis tool.

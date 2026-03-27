@@ -13,6 +13,7 @@ dependencies = [
     "scikit-learn>=1.8",
     "shap>=0.51",
     "matplotlib>=3.10",
+    "xgboost>=3.2",
 ]
 
 [tool.setuptools]

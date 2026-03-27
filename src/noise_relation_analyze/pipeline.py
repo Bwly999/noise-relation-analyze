@@ -23,7 +23,18 @@ from noise_relation_analyze.scoring import (
     score_rows,
     train_noise_scorer,
 )
-from noise_relation_analyze.synthetic_data import generate_synthetic_dataset
+from noise_relation_analyze.severity import (
+    build_single_type_analysis_rows,
+    load_single_type_model,
+    save_single_type_model,
+    score_single_type_rows,
+    summarize_single_type_report,
+    train_single_type_models,
+)
+from noise_relation_analyze.synthetic_data import (
+    generate_single_type_severity_dataset,
+    generate_synthetic_dataset,
+)
 
 
 def run_validate_joins(
@@ -33,15 +44,30 @@ def run_validate_joins(
     output_json: Path,
 ) -> JoinValidationReport:
     phones = [
-        PhoneMasterRecord(**row)
+        PhoneMasterRecord(
+            phone_id=row["phone_id"],
+            model_id=row["model_id"],
+            batch_id=row["batch_id"],
+            vendor_id=row["vendor_id"],
+            structure_version=row["structure_version"],
+            material_version=row["material_version"],
+        )
         for row in _read_csv_rows(phone_master_csv)
     ]
     assets = [
-        AudioAsset(**row)
+        AudioAsset(
+            phone_id=row["phone_id"],
+            direction_id=row["direction_id"],
+            wav_path=row["wav_path"],
+        )
         for row in _read_csv_rows(audio_asset_csv)
     ]
     labels = [
-        LabelRecord(**row)
+        LabelRecord(
+            phone_id=row["phone_id"],
+            noise_type_label=row["noise_type_label"],
+            label_source=row["label_source"],
+        )
         for row in _read_csv_rows(labels_csv)
     ]
     report = validate_joined_records(phones, assets, labels)
@@ -448,6 +474,161 @@ def run_demo_pipeline(
             highlight_feature=configured_visuals[noise_type]["feature"],
             highlight_factor=configured_visuals[noise_type]["factor"],
         )
+
+
+def run_build_single_type_dataset(
+    phone_features_csv: Path,
+    dimension_csv: Path,
+    labels_csv: Path,
+    output_csv: Path,
+    noise_type: str,
+) -> None:
+    rows = build_single_type_analysis_rows(
+        phone_feature_rows=_read_csv_rows(phone_features_csv),
+        dimension_rows=_read_csv_rows(dimension_csv),
+        label_rows=_read_csv_rows(labels_csv),
+        noise_type=noise_type,
+    )
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(rows[0].keys()) if rows else []
+    with output_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def run_train_single_type_models(
+    input_csv: Path,
+    output_model: Path,
+    noise_type: str,
+    factor_keys: list[str],
+) -> dict:
+    model = train_single_type_models(
+        rows=_read_csv_rows(input_csv),
+        noise_type=noise_type,
+        factor_keys=factor_keys,
+    )
+    save_single_type_model(model, output_model)
+    return model.summary()
+
+
+def run_score_single_type_models(
+    input_csv: Path,
+    model_path: Path,
+    output_csv: Path,
+) -> None:
+    rows = _read_csv_rows(input_csv)
+    model = load_single_type_model(model_path)
+    scored_rows = score_single_type_rows(model, rows)
+    output_csv.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(scored_rows[0].keys()) if scored_rows else []
+    with output_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(scored_rows)
+
+
+def run_build_single_type_report(
+    input_csv: Path,
+    scores_csv: Path,
+    model_path: Path,
+    output_json: Path,
+) -> dict:
+    rows = _read_csv_rows(input_csv)
+    scored_rows = _read_csv_rows(scores_csv)
+    model = load_single_type_model(model_path)
+    report = summarize_single_type_report(rows=rows, scored_rows=scored_rows, model=model)
+    output_json.parent.mkdir(parents=True, exist_ok=True)
+    output_json.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    return report
+
+
+def run_render_single_type_report_html(
+    report_json: Path,
+    input_csv: Path,
+    model_path: Path,
+    output_dir: Path,
+    highlight_factor: str,
+) -> Path:
+    from noise_relation_analyze.reporting import render_single_type_report_html
+
+    return render_single_type_report_html(
+        report_json=report_json,
+        input_csv=input_csv,
+        model_path=model_path,
+        output_dir=output_dir,
+        highlight_factor=highlight_factor,
+    )
+
+
+def run_single_type_demo_pipeline(
+    output_dir: Path,
+    phone_count: int = 48,
+    labeled_fraction: float = 1.0,
+    seed: int = 42,
+    noise_type: str = "type_1",
+    factor_keys: list[str] | None = None,
+) -> None:
+    manifest = generate_single_type_severity_dataset(
+        output_dir=output_dir,
+        phone_count=phone_count,
+        labeled_fraction=labeled_fraction,
+        seed=seed,
+        noise_type=noise_type,
+    )
+    active_factor_keys = factor_keys or [
+        "hinge_gap",
+        "left_support_gap",
+        "right_support_gap",
+        "torsion_delta",
+        "panel_flushness",
+        "adhesive_thickness",
+    ]
+    artifacts_dir = output_dir / "artifacts"
+    reports_dir = artifacts_dir / "reports"
+
+    run_validate_joins(
+        phone_master_csv=manifest.phone_master_csv,
+        audio_asset_csv=manifest.audio_asset_csv,
+        labels_csv=manifest.labels_csv,
+        output_json=artifacts_dir / "join_report.json",
+    )
+    run_extract_features(
+        audio_asset_csv=manifest.audio_asset_csv,
+        output_csv=artifacts_dir / "phone_features.csv",
+    )
+    run_build_single_type_dataset(
+        phone_features_csv=artifacts_dir / "phone_features.csv",
+        dimension_csv=manifest.dimension_csv,
+        labels_csv=manifest.labels_csv,
+        output_csv=artifacts_dir / "single_type_dataset.csv",
+        noise_type=noise_type,
+    )
+    run_train_single_type_models(
+        input_csv=artifacts_dir / "single_type_dataset.csv",
+        output_model=artifacts_dir / "single_type_models.bin",
+        noise_type=noise_type,
+        factor_keys=active_factor_keys,
+    )
+    run_score_single_type_models(
+        input_csv=artifacts_dir / "single_type_dataset.csv",
+        model_path=artifacts_dir / "single_type_models.bin",
+        output_csv=artifacts_dir / "single_type_scores.csv",
+    )
+    report_json = reports_dir / f"{noise_type}_severity_report.json"
+    run_build_single_type_report(
+        input_csv=artifacts_dir / "single_type_dataset.csv",
+        scores_csv=artifacts_dir / "single_type_scores.csv",
+        model_path=artifacts_dir / "single_type_models.bin",
+        output_json=report_json,
+    )
+    run_render_single_type_report_html(
+        report_json=report_json,
+        input_csv=artifacts_dir / "single_type_dataset.csv",
+        model_path=artifacts_dir / "single_type_models.bin",
+        output_dir=artifacts_dir / "html" / noise_type,
+        highlight_factor=active_factor_keys[0],
+    )
 
 
 def _read_csv_rows(path: Path) -> list[dict[str, str]]:

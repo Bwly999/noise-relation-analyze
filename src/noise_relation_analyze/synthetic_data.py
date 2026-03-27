@@ -128,6 +128,121 @@ def generate_synthetic_dataset(
     )
 
 
+def generate_single_type_severity_dataset(
+    output_dir: Path,
+    phone_count: int = 48,
+    labeled_fraction: float = 1.0,
+    seed: int = 42,
+    noise_type: str = "type_1",
+) -> SyntheticDatasetManifest:
+    if phone_count <= 0:
+        raise ValueError("phone_count must be positive")
+    if not 0.0 <= labeled_fraction <= 1.0:
+        raise ValueError("labeled_fraction must be between 0 and 1")
+
+    rng = random.Random(seed)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    audio_dir = output_dir / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+
+    phone_master_csv = output_dir / "phone_master.csv"
+    audio_asset_csv = output_dir / "audio_asset.csv"
+    labels_csv = output_dir / "labels.csv"
+    dimension_csv = output_dir / "dimensions.csv"
+
+    phone_rows: list[dict[str, str]] = []
+    audio_rows: list[dict[str, str]] = []
+    label_rows: list[dict[str, str]] = []
+    dimension_rows: list[dict[str, str]] = []
+
+    label_count = int(phone_count * labeled_fraction)
+    labeled_ids = {f"P{index + 1:04d}" for index in rng.sample(range(phone_count), label_count)}
+
+    for index in range(phone_count):
+        phone_id = f"P{index + 1:04d}"
+        metadata = _build_phone_metadata(index)
+        dimensions = _build_single_type_dimensions(rng)
+        true_severity = _compute_single_type_true_severity(dimensions, rng)
+        is_ng = 1 if true_severity >= 0.62 else 0
+
+        phone_rows.append({"phone_id": phone_id, **metadata})
+        dimension_rows.append({"phone_id": phone_id, **_stringify_numeric_map(dimensions)})
+
+        if phone_id in labeled_ids:
+            label_rows.append(
+                {
+                    "phone_id": phone_id,
+                    "noise_type_label": noise_type,
+                    "is_ng": str(is_ng),
+                    "true_severity": f"{true_severity:.6f}",
+                    "label_source": "synthetic_severity_rule",
+                }
+            )
+
+        direction_profiles = _build_single_type_direction_profiles(dimensions, true_severity)
+        for direction_id, profile in direction_profiles.items():
+            wav_path = audio_dir / f"{phone_id}_{direction_id}.wav"
+            _write_single_type_severity_wave(
+                wav_path=wav_path,
+                sample_rate=8000,
+                severity=true_severity,
+                direction_gain=profile["direction_gain"],
+                pulse_interval=profile["pulse_interval"],
+                pulse_width=profile["pulse_width"],
+                broadband_gain=profile["broadband_gain"],
+                cycles_per_file=4,
+                rng=rng,
+            )
+            audio_rows.append(
+                {
+                    "phone_id": phone_id,
+                    "direction_id": direction_id,
+                    "wav_path": str(wav_path),
+                }
+            )
+
+    _write_csv(
+        phone_master_csv,
+        [
+            "phone_id",
+            "model_id",
+            "batch_id",
+            "vendor_id",
+            "structure_version",
+            "material_version",
+        ],
+        phone_rows,
+    )
+    _write_csv(audio_asset_csv, ["phone_id", "direction_id", "wav_path"], audio_rows)
+    _write_csv(
+        labels_csv,
+        ["phone_id", "noise_type_label", "is_ng", "true_severity", "label_source"],
+        label_rows,
+    )
+    _write_csv(
+        dimension_csv,
+        [
+            "phone_id",
+            "hinge_gap",
+            "left_support_gap",
+            "right_support_gap",
+            "torsion_delta",
+            "panel_flushness",
+            "adhesive_thickness",
+        ],
+        dimension_rows,
+    )
+
+    return SyntheticDatasetManifest(
+        root_dir=output_dir,
+        phone_master_csv=phone_master_csv,
+        audio_asset_csv=audio_asset_csv,
+        labels_csv=labels_csv,
+        dimension_csv=dimension_csv,
+        audio_dir=audio_dir,
+    )
+
+
 def _sample_noise_type(index: int, chosen_noise_types: list[str]) -> str:
     return chosen_noise_types[index % len(chosen_noise_types)]
 
@@ -162,6 +277,44 @@ def _build_dimensions(rng: random.Random, noise_type: str) -> dict[str, float]:
         dimensions["panel_flushness"] += rng.uniform(0.06, 0.09)
         dimensions["adhesive_thickness"] -= rng.uniform(0.03, 0.05)
     return dimensions
+
+
+def _build_single_type_dimensions(rng: random.Random) -> dict[str, float]:
+    hinge_gap = 0.112 + rng.uniform(-0.014, 0.038)
+    left_support_gap = 0.081 + rng.uniform(-0.012, 0.030)
+    right_support_gap = 0.080 + rng.uniform(-0.010, 0.022)
+    torsion_delta = 0.031 + rng.uniform(-0.006, 0.018)
+    panel_flushness = 0.020 + rng.uniform(-0.004, 0.009)
+    adhesive_thickness = 0.151 + rng.uniform(-0.018, 0.012)
+    return {
+        "hinge_gap": hinge_gap,
+        "left_support_gap": left_support_gap,
+        "right_support_gap": right_support_gap,
+        "torsion_delta": torsion_delta,
+        "panel_flushness": panel_flushness,
+        "adhesive_thickness": adhesive_thickness,
+    }
+
+
+def _compute_single_type_true_severity(dimensions: dict[str, float], rng: random.Random) -> float:
+    hinge_component = max(0.0, (dimensions["hinge_gap"] - 0.112) / 0.030)
+    left_component = max(0.0, (dimensions["left_support_gap"] - 0.081) / 0.024)
+    torsion_component = max(0.0, (dimensions["torsion_delta"] - 0.031) / 0.016)
+    imbalance_component = abs(dimensions["left_support_gap"] - dimensions["right_support_gap"]) / 0.020
+    thin_adhesive_component = max(0.0, (0.151 - dimensions["adhesive_thickness"]) / 0.020)
+    flush_component = max(0.0, (dimensions["panel_flushness"] - 0.020) / 0.010)
+
+    raw = (
+        (0.42 * hinge_component)
+        + (0.24 * left_component)
+        + (0.15 * torsion_component)
+        + (0.08 * imbalance_component)
+        + (0.06 * thin_adhesive_component)
+        + (0.05 * flush_component)
+        + (0.08 * hinge_component * left_component)
+        + rng.uniform(-0.045, 0.045)
+    )
+    return 1.0 / (1.0 + math.exp(-3.3 * (raw - 0.63)))
 
 
 def _build_direction_profiles(
@@ -208,6 +361,44 @@ def _build_direction_profiles(
     return base
 
 
+def _build_single_type_direction_profiles(
+    dimensions: dict[str, float],
+    true_severity: float,
+) -> dict[str, dict[str, float]]:
+    support_imbalance = abs(dimensions["left_support_gap"] - dimensions["right_support_gap"])
+    secondary_gain = 0.36 + min(0.18, support_imbalance * 6.5)
+    tertiary_gain = 0.16 + min(0.08, support_imbalance * 3.5)
+    interval_shift = int(round(true_severity * 8))
+    pulse_width = 2 if true_severity < 0.40 else 3 if true_severity < 0.72 else 4
+    broadband_gain = 0.05 + (true_severity * 0.18)
+    return {
+        "dir_1": {
+            "direction_gain": 1.0,
+            "pulse_interval": max(18, 34 - interval_shift),
+            "pulse_width": pulse_width,
+            "broadband_gain": broadband_gain,
+        },
+        "dir_2": {
+            "direction_gain": secondary_gain,
+            "pulse_interval": max(20, 38 - interval_shift),
+            "pulse_width": pulse_width,
+            "broadband_gain": broadband_gain * 0.72,
+        },
+        "dir_3": {
+            "direction_gain": tertiary_gain,
+            "pulse_interval": max(24, 44 - interval_shift),
+            "pulse_width": max(2, pulse_width - 1),
+            "broadband_gain": broadband_gain * 0.42,
+        },
+        "dir_4": {
+            "direction_gain": 0.12,
+            "pulse_interval": max(28, 50 - interval_shift),
+            "pulse_width": 2,
+            "broadband_gain": broadband_gain * 0.28,
+        },
+    }
+
+
 def _write_synthetic_wave(
     wav_path: Path,
     sample_rate: int,
@@ -235,6 +426,57 @@ def _write_synthetic_wave(
                 value = amplitude * carrier + noise
             else:
                 value = rng.uniform(-0.008, 0.008)
+
+            samples.append(max(-32767, min(32767, int(value * 32767))))
+
+    with wave.open(str(wav_path), "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        frames = b"".join(sample.to_bytes(2, signed=True, byteorder="little") for sample in samples)
+        handle.writeframes(frames)
+
+
+def _write_single_type_severity_wave(
+    wav_path: Path,
+    sample_rate: int,
+    severity: float,
+    direction_gain: float,
+    pulse_interval: int,
+    pulse_width: int,
+    broadband_gain: float,
+    cycles_per_file: int,
+    rng: random.Random,
+) -> None:
+    samples: list[int] = []
+    cycle_length = 1800
+    active_start = 500
+    active_end = 1300
+
+    for _ in range(cycles_per_file):
+        phase_shift = rng.uniform(0.0, math.pi / 4)
+        harmonic_shift = rng.uniform(0.0, math.pi / 5)
+        for sample_index in range(cycle_length):
+            if active_start <= sample_index < active_end:
+                within_active = sample_index - active_start
+                active_ratio = within_active / max(1, (active_end - active_start - 1))
+                envelope = math.sin(math.pi * active_ratio) ** 1.4
+                carrier = (
+                    math.sin((within_active / 24.0) + phase_shift)
+                    + (0.35 * math.sin((within_active / 8.5) + harmonic_shift))
+                )
+                pulse = 1.0 if (within_active % pulse_interval) < pulse_width else 0.0
+                crackle = 0.0
+                if rng.random() < (0.01 + (severity * 0.04)):
+                    crackle = rng.uniform(-1.0, 1.0) * (0.06 + (0.28 * severity))
+                hiss = rng.uniform(-1.0, 1.0) * broadband_gain * 0.22
+                amplitude = (
+                    (0.018 + (0.055 * severity)) * direction_gain
+                    + (0.038 + (0.22 * severity)) * direction_gain * pulse
+                )
+                value = (amplitude * envelope * carrier) + hiss + crackle
+            else:
+                value = rng.uniform(-0.007, 0.007) * (1.0 + (severity * 0.2))
 
             samples.append(max(-32767, min(32767, int(value * 32767))))
 

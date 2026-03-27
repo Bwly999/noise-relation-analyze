@@ -6,17 +6,26 @@ import tomllib
 
 from noise_relation_analyze.pipeline import (
     run_analyze_factors,
+    run_build_single_type_dataset,
+    run_build_single_type_report,
     run_build_noise_report,
     run_demo_pipeline,
     run_evaluate_scores,
     run_extract_features,
     run_prepare_factor_data,
     run_render_noise_report_html,
+    run_render_single_type_report_html,
     run_score_noise_types,
+    run_score_single_type_models,
+    run_single_type_demo_pipeline,
+    run_train_single_type_models,
     run_train_noise_scorer,
     run_validate_joins,
 )
-from noise_relation_analyze.synthetic_data import generate_synthetic_dataset
+from noise_relation_analyze.synthetic_data import (
+    generate_single_type_severity_dataset,
+    generate_synthetic_dataset,
+)
 
 
 def load_pipeline_config(path: Path) -> dict:
@@ -47,12 +56,33 @@ def build_parser() -> argparse.ArgumentParser:
     synth.add_argument("--labeled-fraction", type=float, default=0.5)
     synth.add_argument("--seed", type=int, default=42)
 
+    single_type_synth = subparsers.add_parser(
+        "generate-single-type-severity-data",
+        help="Generate same-noise-type synthetic WAV and severity labels.",
+    )
+    single_type_synth.add_argument("--output-dir", type=Path)
+    single_type_synth.add_argument("--phone-count", type=int, default=48)
+    single_type_synth.add_argument("--labeled-fraction", type=float, default=1.0)
+    single_type_synth.add_argument("--seed", type=int, default=42)
+    single_type_synth.add_argument("--noise-type", type=str, default="type_1")
+
     demo = subparsers.add_parser("run-demo-pipeline", help="Run the full synthetic MVP pipeline.")
     demo.add_argument("--output-dir", type=Path)
     demo.add_argument("--phone-count", type=int, default=24)
     demo.add_argument("--labeled-fraction", type=float, default=1.0)
     demo.add_argument("--seed", type=int, default=42)
     demo.add_argument("--noise-types", nargs="+")
+
+    single_type_demo = subparsers.add_parser(
+        "run-single-type-demo-pipeline",
+        help="Run the single-type severity plus NG pipeline.",
+    )
+    single_type_demo.add_argument("--output-dir", type=Path)
+    single_type_demo.add_argument("--phone-count", type=int, default=48)
+    single_type_demo.add_argument("--labeled-fraction", type=float, default=1.0)
+    single_type_demo.add_argument("--seed", type=int, default=42)
+    single_type_demo.add_argument("--noise-type", type=str, default="type_1")
+    single_type_demo.add_argument("--factors", nargs="+")
 
     prepare = subparsers.add_parser("prepare-factor-data", help="Merge features, dimensions, and labels.")
     prepare.add_argument("--phone-features", type=Path)
@@ -101,6 +131,52 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument("--target", type=str)
     analyze.add_argument("--factors", nargs="+")
 
+    single_type_prepare = subparsers.add_parser(
+        "build-single-type-dataset",
+        help="Join audio severity, dimensions, and NG labels for a single noise type.",
+    )
+    single_type_prepare.add_argument("--phone-features", type=Path)
+    single_type_prepare.add_argument("--dimensions", type=Path)
+    single_type_prepare.add_argument("--labels", type=Path)
+    single_type_prepare.add_argument("--output", type=Path)
+    single_type_prepare.add_argument("--noise-type", type=str, default="type_1")
+
+    single_type_train = subparsers.add_parser(
+        "train-single-type-models",
+        help="Train XGBoost severity and NG models from dimension factors.",
+    )
+    single_type_train.add_argument("--input", type=Path)
+    single_type_train.add_argument("--output", type=Path)
+    single_type_train.add_argument("--noise-type", type=str, default="type_1")
+    single_type_train.add_argument("--factors", nargs="+", required=True)
+
+    single_type_score = subparsers.add_parser(
+        "score-single-type-models",
+        help="Predict severity and NG risk from a trained single-type model bundle.",
+    )
+    single_type_score.add_argument("--input", type=Path)
+    single_type_score.add_argument("--model", type=Path)
+    single_type_score.add_argument("--output", type=Path)
+
+    single_type_report = subparsers.add_parser(
+        "build-single-type-report",
+        help="Build a report for same-type severity and NG analysis.",
+    )
+    single_type_report.add_argument("--input", type=Path)
+    single_type_report.add_argument("--scores", type=Path)
+    single_type_report.add_argument("--model", type=Path)
+    single_type_report.add_argument("--output", type=Path)
+
+    single_type_html = subparsers.add_parser(
+        "render-single-type-report-html",
+        help="Render local HTML for same-type severity analysis.",
+    )
+    single_type_html.add_argument("--report-json", type=Path)
+    single_type_html.add_argument("--input", type=Path)
+    single_type_html.add_argument("--model", type=Path)
+    single_type_html.add_argument("--output-dir", type=Path)
+    single_type_html.add_argument("--highlight-factor", type=str, required=True)
+
     return parser
 
 
@@ -121,6 +197,15 @@ def main() -> int:
             seed=args.seed,
         )
         return 0
+    if args.command == "generate-single-type-severity-data":
+        generate_single_type_severity_dataset(
+            output_dir=args.output_dir,
+            phone_count=args.phone_count,
+            labeled_fraction=args.labeled_fraction,
+            seed=args.seed,
+            noise_type=args.noise_type,
+        )
+        return 0
     if args.command == "run-demo-pipeline":
         run_demo_pipeline(
             output_dir=args.output_dir,
@@ -128,6 +213,16 @@ def main() -> int:
             labeled_fraction=args.labeled_fraction,
             seed=args.seed,
             noise_types=args.noise_types,
+        )
+        return 0
+    if args.command == "run-single-type-demo-pipeline":
+        run_single_type_demo_pipeline(
+            output_dir=args.output_dir,
+            phone_count=args.phone_count,
+            labeled_fraction=args.labeled_fraction,
+            seed=args.seed,
+            noise_type=args.noise_type,
+            factor_keys=args.factors,
         )
         return 0
     if args.command == "prepare-factor-data":
@@ -173,6 +268,47 @@ def main() -> int:
         return 0
     if args.command == "analyze-factors":
         run_analyze_factors(args.input, args.output, args.target, args.factors)
+        return 0
+    if args.command == "build-single-type-dataset":
+        run_build_single_type_dataset(
+            phone_features_csv=args.phone_features,
+            dimension_csv=args.dimensions,
+            labels_csv=args.labels,
+            output_csv=args.output,
+            noise_type=args.noise_type,
+        )
+        return 0
+    if args.command == "train-single-type-models":
+        run_train_single_type_models(
+            input_csv=args.input,
+            output_model=args.output,
+            noise_type=args.noise_type,
+            factor_keys=args.factors,
+        )
+        return 0
+    if args.command == "score-single-type-models":
+        run_score_single_type_models(
+            input_csv=args.input,
+            model_path=args.model,
+            output_csv=args.output,
+        )
+        return 0
+    if args.command == "build-single-type-report":
+        run_build_single_type_report(
+            input_csv=args.input,
+            scores_csv=args.scores,
+            model_path=args.model,
+            output_json=args.output,
+        )
+        return 0
+    if args.command == "render-single-type-report-html":
+        run_render_single_type_report_html(
+            report_json=args.report_json,
+            input_csv=args.input,
+            model_path=args.model,
+            output_dir=args.output_dir,
+            highlight_factor=args.highlight_factor,
+        )
         return 0
     return 0
 
